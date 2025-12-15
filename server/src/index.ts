@@ -16,24 +16,7 @@ const allowedOrigins = [
 ];
 
 const corsOptions = {
-  origin: (
-    origin: string | undefined,
-    callback: (err: Error | null, allow?: boolean) => void
-  ) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    // Check if origin is in allowed list or matches Vercel preview pattern
-    if (
-      allowedOrigins.includes(origin) ||
-      origin.match(/https:\/\/naga-poker-.*\.vercel\.app$/)
-    ) {
-      callback(null, true);
-    } else {
-      // Still call callback with false instead of throwing error to allow proper CORS response
-      callback(null, false);
-    }
-  },
+  origin: true,
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"], // Include OPTIONS for preflight requests
   allowedHeaders: ["Content-Type", "Authorization"], // Explicitly allow headers
@@ -41,7 +24,10 @@ const corsOptions = {
 };
 
 const io = new Server(httpServer, {
-  cors: corsOptions,
+  cors: {
+    origin: "*", // Allow all origins for Socket.IO too
+    credentials: true,
+  },
 });
 
 app.use(cors(corsOptions));
