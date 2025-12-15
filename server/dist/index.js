@@ -11,27 +11,31 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const httpServer = (0, http_1.createServer)(app);
+// CORS origin validator
+const allowedOrigins = [
+    "http://localhost:5173",
+    "https://naga-poker.vercel.app"
+];
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin)
+            return callback(null, true);
+        // Check if origin is in allowed list or matches Vercel preview pattern
+        if (allowedOrigins.includes(origin) || origin.match(/https:\/\/naga-poker-.*\.vercel\.app$/)) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ["GET", "POST"]
+};
 const io = new socket_io_1.Server(httpServer, {
-    cors: {
-        origin: [
-            "http://localhost:5173",
-            "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
-            "https://naga-poker.vercel.app",
-            /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
-        ],
-        methods: ["GET", "POST"],
-        credentials: true
-    }
+    cors: corsOptions
 });
-app.use((0, cors_1.default)({
-    origin: [
-        "http://localhost:5173",
-        "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
-        "https://naga-poker.vercel.app",
-        /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
-    ],
-    credentials: true
-}));
+app.use((0, cors_1.default)(corsOptions));
 app.use(express_1.default.json());
 app.get('/', (req, res) => {
     res.send('Naga Poker Server is running');
