@@ -12,8 +12,7 @@ const httpServer = createServer(app);
 // CORS origin validator
 const allowedOrigins = [
   "http://localhost:5173",
-  "http://localhost:5174",
-  "https://naga-poker.vercel.app",
+  "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app'",
 ];
 
 const corsOptions = {
