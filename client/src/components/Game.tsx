@@ -69,9 +69,10 @@ export function Game({ username, onLogout, demoMode = false }: GameProps) {
         return; // Skip socket logic
     }
 
-    const BACKEND_URL = import.meta.env.MODE === 'production'
-      ? 'https://naga-poker-production.up.railway.app' 
-      : 'http://localhost:3000';
+    const BACKEND_URL =
+      import.meta.env.MODE === "production"
+        ? "https://naga-poker-backend.onrender.com"
+        : "http://localhost:3000";
     const s = io(BACKEND_URL);
     // Normal multiplayer mode
     setSocket(s);
