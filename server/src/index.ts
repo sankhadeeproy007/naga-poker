@@ -68,9 +68,6 @@ const io = new Server(httpServer, {
 // Apply CORS middleware BEFORE express.json()
 app.use(cors(corsOptions));
 
-// Handle preflight requests explicitly
-app.options("*", cors(corsOptions));
-
 app.use(express.json());
 
 app.get("/", (req, res) => {
