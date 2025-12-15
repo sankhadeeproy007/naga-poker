@@ -13,22 +13,38 @@ const app = (0, express_1.default)();
 const httpServer = (0, http_1.createServer)(app);
 const io = new socket_io_1.Server(httpServer, {
     cors: {
-        origin: "*", // Allow all for dev
-        methods: ["GET", "POST"]
+        origin: [
+            "http://localhost:5173",
+            "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
+            "https://naga-poker.vercel.app",
+            /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
+        ],
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: [
+        "http://localhost:5173",
+        "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
+        "https://naga-poker.vercel.app",
+        /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
+    ],
+    credentials: true
+}));
 app.use(express_1.default.json());
 app.get('/', (req, res) => {
     res.send('Naga Poker Server is running');
 });
 app.post('/api/login', (req, res) => {
     const { password, username } = req.body;
-    if (password === 'naga-poker' && username) {
+    // Valid player names (case-insensitive)
+    const validPasswords = ['roy', 'lomba', 'gaal'];
+    if (validPasswords.includes(password === null || password === void 0 ? void 0 : password.toLowerCase()) && username) {
         res.json({ success: true, username });
     }
     else {
-        res.status(401).json({ success: false, message: 'Invalid credentials' });
+        res.status(401).json({ success: false, message: 'Invalid player name' });
     }
 });
 const gameUtils_1 = require("./gameUtils");
@@ -42,10 +58,35 @@ let tableCards = []; // Stack of played cards
 let restartVotes = new Set(); // Stores usernames that voted YES
 let restartRequester = '';
 let lastPlayerToPlay = ''; // Username of the last player to play a card
+let lastActor = ''; // Username of last person to Act (Play OR Pass)
 let roundStartIndex = 0; // Index in tableCards where the current logical round starts
 let activeComboType = null;
 let activeComboValue = 0;
+let playHistory = []; // Track who played each card/combo
+let turnLocked = false; // Prevents next player from acting during undo window
+let turnLockTimeout = null; // Timeout for unlocking turn
 const comboUtils_1 = require("./comboUtils");
+// Helper for deep copy
+const clone = (obj) => JSON.parse(JSON.stringify(obj));
+let gameHistory = [];
+const MAX_UNDO = 3;
+// Map username -> remaining undos
+let playerUndoCounts = {};
+const saveGameState = () => {
+    gameHistory.push({
+        tableCards: clone(tableCards),
+        playerHands: clone(playerHands),
+        turnIndex,
+        activeComboType,
+        activeComboValue,
+        roundStartIndex,
+        lastPlayerToPlay,
+        lastActor
+    });
+    // Limit history size? Maybe last 10 moves.
+    if (gameHistory.length > 10)
+        gameHistory.shift();
+};
 io.on('connection', (socket) => {
     console.log('a user connected', socket.id);
     socket.on('join_game', (username) => {
@@ -59,7 +100,11 @@ io.on('connection', (socket) => {
                     turnIndex,
                     tableCards,
                     roundStartIndex,
-                    players: players.map(p => ({ username: p.username, cardCount: playerHands[p.username].length }))
+                    playHistory,
+                    activeComboType, // Restore Active Type
+                    activeComboValue, // Restore Active Value
+                    players: players.map(p => ({ username: p.username, cardCount: playerHands[p.username].length })),
+                    playerUndoCounts // Restore Undo Counts
                 });
                 const pIndex = players.findIndex(p => p.username === username);
                 if (pIndex !== -1) {
@@ -94,11 +139,19 @@ io.on('connection', (socket) => {
                 playerHands[players[0].username] = h1;
                 playerHands[players[1].username] = h2;
                 playerHands[players[2].username] = h3;
-                playerHands[players[2].username] = h3;
+                playerHands[players[2].username] = h3; // This line is duplicated in the original, keeping it as is.
                 tableCards = [];
                 roundStartIndex = 0;
                 activeComboType = null;
                 activeComboValue = 0;
+                playHistory = []; // Clear play history
+                gameHistory = []; // Clear history on new game
+                lastPlayerToPlay = ''; // Reset
+                lastActor = ''; // Reset
+                // Initialize Undo Counts
+                players.forEach(p => {
+                    playerUndoCounts[p.username] = MAX_UNDO;
+                });
                 // Find who has 3 of Clubs
                 // 3 of Clubs value is 12 (Rank 3 index 0 * 10 + Suit Clubs 2) -> Wait, logic check:
                 // Rank 3 => 1. Suit Clubs => 2. Total 12.
@@ -120,7 +173,9 @@ io.on('connection', (socket) => {
                         turnIndex,
                         tableCards: [],
                         roundStartIndex: 0,
-                        players: players.map(pl => ({ username: pl.username, cardCount: playerHands[pl.username].length }))
+                        playHistory: [],
+                        players: players.map(pl => ({ username: pl.username, cardCount: playerHands[pl.username].length })),
+                        playerUndoCounts // Send undo counts on game start
                     });
                 });
             }
@@ -132,24 +187,28 @@ io.on('connection', (socket) => {
     socket.on('play_turn', (indices) => {
         // Identify player
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1)
+        if (pIndex === -1) {
+            console.log(`Play_turn: Player with socket ID ${socket.id} not found.`);
             return; // Not found
+        }
         // Check turn
         if (pIndex !== turnIndex) {
-            console.log(`Not player ${pIndex}'s turn`);
+            console.log(`Play_turn: Not player ${players[pIndex].username}'s turn. Current turn is ${players[turnIndex].username}.`);
             return;
         }
         const username = players[pIndex].username;
         const hand = playerHands[username];
         // Validate Indices
-        if (!hand || indices.some(i => i < 0 || i >= hand.length))
+        if (!hand || indices.some(i => i < 0 || i >= hand.length)) {
+            console.log(`Play_turn: Invalid indices provided by ${username}.`);
             return;
+        }
         // Get Cards
         const cardsToPlay = indices.map(i => hand[i]);
         // Identify Combo
         const combo = (0, comboUtils_1.identifyCombo)(cardsToPlay); // { type, value }
         if (!combo) {
-            console.log("Invalid combination played");
+            console.log(`Play_turn: Invalid combination played by ${username}. Cards: ${JSON.stringify(cardsToPlay)}`);
             return;
         }
         // Validation against Active Table
@@ -158,11 +217,16 @@ io.on('connection', (socket) => {
             // New Round (or Start of Game)
             // Must play 3 of Clubs check (First turn of game)
             if (tableCards.length === 0 && roundStartIndex === 0) {
-                // Enforce 3 of Clubs presence?
-                // "Start with 3 of Clubs". Usually implies 3 of Clubs MUST be in the set.
+                // NEW: Must be playing Single
+                if (combo.type !== 'single') {
+                    console.log(`Play_turn: ${username} cannot start game with a Combo. Must play a single card.`);
+                    return;
+                }
+                // Enforce 3 of Clubs presence
+                // "Start with 3 of Clubs". Using IdentifyCombo means we have cardsToPlay.
                 const has3Clubs = cardsToPlay.some(c => c.rank === '3' && c.suit === 'clubs');
                 if (!has3Clubs) {
-                    console.log("Must play 3 of Clubs in the first hand");
+                    console.log(`Play_turn: ${username} must play 3 of Clubs in the first hand.`);
                     return;
                 }
             }
@@ -170,50 +234,35 @@ io.on('connection', (socket) => {
             // Note: Logic allows setting the Type (Single or Set).
         }
         else {
-            // Verify Hierarchy
-            if (cardsToPlay.length !== activeTableCards.length) {
-                // Usually count must match (1 vs 1, 5 vs 5).
-                // Exception: If we support Quads vs Triplet? No, always 5 cards.
-                // So if table has 1, you played 5? Reject.
-                // If table has 5, you played 1? Reject.
-                if (activeTableCards.length === 1 && cardsToPlay.length !== 1) {
-                    console.log("Must play Single");
-                    return;
-                }
-                if (activeTableCards.length === 5 && cardsToPlay.length !== 5) {
-                    console.log("Must play 5 Cards");
-                    return;
-                }
+            // Responding to existing play
+            // CRITICAL: Validate based on TYPE, not length
+            // (5 singles on table should still accept singles, not require 5-card combos)
+            if (combo.type !== activeComboType) {
+                console.log(`Play_turn: ${username} must play ${activeComboType} to match active table. Played: ${combo.type}.`);
+                return;
             }
             // Verify Value Logic
             if (combo.type === 'single') {
                 // Standard single check
                 if (combo.value <= activeComboValue) {
-                    console.log("Single too small");
+                    console.log(`Play_turn: ${username}'s single card (${combo.value}) is too small. Active: ${activeComboValue}.`);
                     return;
                 }
             }
             else {
-                // Set Logic
-                // Hierarchy: Straight(1) < Triplet(2) < Quads(3).
-                const typeRank = { 'straight': 1, 'triplet': 2, 'quads': 3 };
-                const currentRank = typeRank[activeComboType] || 0;
-                const playedRank = typeRank[combo.type] || 0;
-                if (playedRank < currentRank) {
-                    console.log("Combo Type too weak");
+                // Set Logic (Straight/Triplet/Quads)
+                // Already verified type matches above
+                // Compare Values (Check higher)
+                console.log(`[DEBUG] Set Comparison: Type=${combo.type}, Played=${combo.value}, Active=${activeComboValue}`);
+                if (combo.value <= activeComboValue) {
+                    console.log(`Play_turn: ${username}'s combo value (${combo.value}) is too small. Active: ${activeComboValue}.`);
                     return;
                 }
-                if (playedRank === currentRank) {
-                    // Compare Values
-                    if (combo.value <= activeComboValue) {
-                        console.log("Combo Value too small");
-                        return;
-                    }
-                }
-                // If playedRank > currentRank, Allowed (e.g. Quads on FullHouse).
             }
         }
         // Execute Move
+        // SAVE STATE BEFORE MOVING
+        saveGameState();
         // Remove from hand (Indices must be handled carefully as splicing shifts indices!)
         // Sort indices Descending to splice safely
         const sortedIndices = [...indices].sort((a, b) => b - a);
@@ -222,12 +271,15 @@ io.on('connection', (socket) => {
         }
         // Add to table
         tableCards.push(...cardsToPlay);
+        // Track play history
+        playHistory.push({ player: username, cardCount: cardsToPlay.length });
         // Update State
         activeComboType = combo.type;
         activeComboValue = combo.value;
         // Update Turn (Anti-clockwise)
         turnIndex = (turnIndex - 1 + 3) % 3;
         lastPlayerToPlay = username;
+        lastActor = username; // This player acted
         // Broadcast update
         const actionText = combo.type === 'single'
             ? `${username} played ${cardsToPlay[0].rank} of ${cardsToPlay[0].suit}`
@@ -236,22 +288,106 @@ io.on('connection', (socket) => {
             turnIndex,
             tableCards,
             roundStartIndex,
+            playHistory,
+            activeComboType, // Broadcast Active Type
+            activeComboValue, // Broadcast Active Value
             players: players.map(p => ({ username: p.username, cardCount: playerHands[p.username].length })),
-            lastAction: actionText
+            lastAction: actionText,
+            playerUndoCounts // Send undo counts
         });
         // Also update the player's own hand privately
         socket.emit('hand_update', playerHands[username]);
+        // Update Undo Counts for everyone (we can include in players list or separate event)
+        io.emit('undo_update', playerUndoCounts);
+        // Lock turn for 3 seconds (undo window)
+        turnLocked = true;
+        if (turnLockTimeout)
+            clearTimeout(turnLockTimeout);
+        turnLockTimeout = setTimeout(() => {
+            turnLocked = false;
+            io.emit('turn_unlocked');
+            console.log('Turn unlocked - next player can now act');
+        }, 3000);
+        // Check for winner (player has no cards left)
+        if (playerHands[username].length === 0) {
+            console.log(`${username} has won the game!`);
+            gameActive = false; // Prevent further plays
+            if (turnLockTimeout)
+                clearTimeout(turnLockTimeout);
+            turnLocked = false;
+            io.emit('game_won', { winner: username });
+        }
+    });
+    socket.on('undo_turn', () => {
+        // identify player
+        const pIndex = players.findIndex(p => p.id === socket.id);
+        if (pIndex === -1) {
+            console.log(`Undo_turn: Player with socket ID ${socket.id} not found.`);
+            return;
+        }
+        const username = players[pIndex].username;
+        // Validate Undo
+        // 1. Must implement "3 Undos Only"
+        if ((playerUndoCounts[username] || 0) <= 0) {
+            console.log(`Undo_turn: ${username} has no undos left.`);
+            return;
+        }
+        // 2. Must be the last actor
+        if (lastActor !== username) {
+            console.log(`Undo_turn: ${username} is not the last actor (${lastActor}). Cannot undo.`);
+            return;
+        }
+        // 3. Must have previous state in history
+        if (gameHistory.length === 0) {
+            console.log(`Undo_turn: No previous game state to undo to for ${username}.`);
+            return;
+        }
+        // Execute Undo
+        const previousState = gameHistory.pop(); // Get the last state
+        if (!previousState) { // Should not happen if gameHistory.length > 0
+            console.log(`Undo_turn: Failed to retrieve previous state for ${username}.`);
+            return;
+        }
+        // Restore state
+        tableCards = previousState.tableCards;
+        playerHands = previousState.playerHands;
+        turnIndex = previousState.turnIndex;
+        activeComboType = previousState.activeComboType;
+        activeComboValue = previousState.activeComboValue;
+        roundStartIndex = previousState.roundStartIndex;
+        lastPlayerToPlay = previousState.lastPlayerToPlay;
+        lastActor = previousState.lastActor; // Restore lastActor from previous state
+        // Decrement undo count for the player who initiated the undo
+        playerUndoCounts[username] = (playerUndoCounts[username] || 0) - 1;
+        console.log(`Undo_turn: ${username} performed an undo. Remaining undos: ${playerUndoCounts[username]}.`);
+        // Broadcast update
+        io.emit('game_update', {
+            turnIndex,
+            tableCards,
+            roundStartIndex,
+            activeComboType,
+            players: players.map(p => ({ username: p.username, cardCount: playerHands[p.username].length })),
+            lastAction: `${username} undid their last move.`,
+            playerUndoCounts // Send updated undo counts
+        });
+        // Also update the player's own hand privately
+        socket.emit('hand_update', playerHands[username]);
+        io.emit('undo_update', playerUndoCounts); // Explicitly send undo counts update
     });
     socket.on('pass_turn', () => {
         // Identify player
         const pIndex = players.findIndex(p => p.id === socket.id);
-        if (pIndex === -1)
-            return;
+        if (pIndex === -1) {
+            console.log(`Pass_turn: Player with socket ID ${socket.id} not found.`);
+            return; // Not found    
+        }
         if (pIndex !== turnIndex) {
-            console.log(`Not player ${pIndex}'s turn to pass`);
+            console.log(`Pass_turn: Not player ${players[pIndex].username}'s turn to pass. Current turn is ${players[turnIndex].username}.`);
             return;
         }
         const username = players[pIndex].username;
+        // SAVE STATE BEFORE MOVING
+        saveGameState();
         // Calculate Next Turn (Anti-clockwise)
         const nextTurnIndex = (turnIndex - 1 + 3) % 3;
         const nextPlayer = players[nextTurnIndex].username;
@@ -271,8 +407,11 @@ io.on('connection', (socket) => {
             turnIndex,
             tableCards,
             roundStartIndex,
+            activeComboType, // Persist or Null
+            activeComboValue, // Persist or 0
             players: players.map(p => ({ username: p.username, cardCount: playerHands[p.username].length })),
-            lastAction: actionMessage
+            lastAction: actionMessage,
+            playerUndoCounts
         });
     });
     socket.on('request_restart', () => {

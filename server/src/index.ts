@@ -10,12 +10,26 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "*", // Allow all for dev
-    methods: ["GET", "POST"]
+    origin: [
+      "http://localhost:5173",
+      "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
+      "https://naga-poker.vercel.app",
+      /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
+    "https://naga-poker.vercel.app",
+    /https:\/\/naga-poker-.*\.vercel\.app$/ // Allow all Vercel preview deployments
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 app.get('/', (req, res) => {

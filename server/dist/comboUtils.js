@@ -5,6 +5,12 @@ exports.identifyCombo = identifyCombo;
 const RANKS = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
 const getRankIndex = (rank) => RANKS.indexOf(rank);
 function identifyCombo(cards) {
+    // RULE: Rank '2' cannot be part of ANY combo. It can only be played as a Single.
+    if (cards.length > 1) {
+        if (cards.some(c => c.rank === '2')) {
+            return null;
+        }
+    }
     if (cards.length === 1) {
         // Single
         // Value: RankIndex * 10 + SuitIndex
