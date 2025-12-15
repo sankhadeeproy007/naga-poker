@@ -12,7 +12,7 @@ const httpServer = createServer(app);
 // CORS origin validator
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://naga-poker-191e47a0e-sankhadeeproy007s-projects.vercel.app",
+  "https://naga-poker.vercel.app",
 ];
 
 const corsOptions = {
@@ -21,61 +21,34 @@ const corsOptions = {
     callback: (err: Error | null, allow?: boolean) => void
   ) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) {
-      console.log("CORS: No origin provided, allowing");
-      return callback(null, true);
+    if (!origin) return callback(null, true);
+
+    // Check if origin is in allowed list or matches Vercel preview pattern
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.match(/https:\/\/naga-poker-.*\.vercel\.app$/)
+    ) {
+      callback(null, true);
+    } else {
+      // Still call callback with false instead of throwing error to allow proper CORS response
+      callback(null, false);
     }
-
-    console.log(`CORS: Checking origin: ${origin}`);
-
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      console.log(`CORS: Origin ${origin} is in allowed list`);
-      return callback(null, true);
-    }
-
-    // Check if origin matches Vercel preview pattern
-    // Matches any Vercel preview URL starting with naga-poker- and ending with .vercel.app
-    const vercelPattern = /^https:\/\/naga-poker-.*\.vercel\.app$/;
-    if (vercelPattern.test(origin)) {
-      console.log(`CORS: Origin ${origin} matches Vercel pattern`);
-      return callback(null, true);
-    }
-
-    // Log rejected origin for debugging
-    console.log(`CORS: Rejected origin: ${origin}`);
-    callback(null, false);
   },
   credentials: true,
-  methods: ["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"], // Include all common methods
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "Accept",
-    "Origin",
-  ], // Explicitly allow common headers
+  methods: ["GET", "POST", "OPTIONS"], // Include OPTIONS for preflight requests
+  allowedHeaders: ["Content-Type", "Authorization"], // Explicitly allow headers
   exposedHeaders: ["Content-Type"],
-  preflightContinue: false,
-  optionsSuccessStatus: 204, // Some legacy browsers (IE11, various SmartTVs) choke on 204
 };
 
 const io = new Server(httpServer, {
   cors: corsOptions,
 });
 
-// Apply CORS middleware BEFORE express.json()
 app.use(cors(corsOptions));
-
 app.use(express.json());
 
 app.get("/", (req, res) => {
   res.send("Naga Poker Server is running");
-});
-
-// Explicit OPTIONS handler for /api/login
-app.options("/api/login", cors(corsOptions), (req, res) => {
-  res.sendStatus(204);
 });
 
 app.post("/api/login", (req, res) => {
