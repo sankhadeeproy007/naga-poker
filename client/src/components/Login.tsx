@@ -35,7 +35,10 @@ export function Login({ onLogin, onDemoMode }: LoginProps) {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:3000/api/login', {
+      const BACKEND_URL = import.meta.env.MODE === 'production'
+        ? 'https://naga-poker-production.up.railway.app' 
+        : 'http://localhost:3000';
+      const response = await fetch(BACKEND_URL + '/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

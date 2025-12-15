@@ -69,8 +69,11 @@ export function Game({ username, onLogout, demoMode = false }: GameProps) {
         return; // Skip socket logic
     }
 
+    const BACKEND_URL = import.meta.env.MODE === 'production'
+      ? 'https://naga-poker-production.up.railway.app' 
+      : 'http://localhost:3000';
+    const s = io(BACKEND_URL);
     // Normal multiplayer mode
-    const s = io(`http://${window.location.hostname}:3000`);
     setSocket(s);
     // ... logic ...
     s.emit('join_game', username);
