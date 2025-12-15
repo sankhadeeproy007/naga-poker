@@ -22,10 +22,16 @@ const corsOptions = {
     callback: (err: Error | null, allow?: boolean) => void
   ) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log("CORS: No origin provided, allowing");
+      return callback(null, true);
+    }
+
+    console.log(`CORS: Checking origin: ${origin}`);
 
     // Check if origin is in allowed list
     if (allowedOrigins.includes(origin)) {
+      console.log(`CORS: Origin ${origin} is in allowed list`);
       return callback(null, true);
     }
 
@@ -33,6 +39,7 @@ const corsOptions = {
     // Matches any Vercel preview URL starting with naga-poker- and ending with .vercel.app
     const vercelPattern = /^https:\/\/naga-poker-.*\.vercel\.app$/;
     if (vercelPattern.test(origin)) {
+      console.log(`CORS: Origin ${origin} matches Vercel pattern`);
       return callback(null, true);
     }
 
@@ -41,20 +48,38 @@ const corsOptions = {
     callback(null, false);
   },
   credentials: true,
-  methods: ["GET", "POST", "OPTIONS"], // Include OPTIONS for preflight requests
-  allowedHeaders: ["Content-Type", "Authorization"], // Explicitly allow headers
+  methods: ["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"], // Include all common methods
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ], // Explicitly allow common headers
   exposedHeaders: ["Content-Type"],
+  preflightContinue: false,
+  optionsSuccessStatus: 204, // Some legacy browsers (IE11, various SmartTVs) choke on 204
 };
 
 const io = new Server(httpServer, {
   cors: corsOptions,
 });
 
+// Apply CORS middleware BEFORE express.json()
 app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options("*", cors(corsOptions));
+
 app.use(express.json());
 
 app.get("/", (req, res) => {
   res.send("Naga Poker Server is running");
+});
+
+// Explicit OPTIONS handler for /api/login
+app.options("/api/login", cors(corsOptions), (req, res) => {
+  res.sendStatus(204);
 });
 
 app.post("/api/login", (req, res) => {
